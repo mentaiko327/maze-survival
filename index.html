@@ -1,0 +1,471 @@
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>迷路サバイバル</title>
+<style>
+* {
+  box-sizing: border-box;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  margin: 0;
+  min-height: 100%;
+  background: #101820;
+  color: white;
+  font-family: system-ui, sans-serif;
+  text-align: center;
+  overscroll-behavior: none;
+}
+
+body {
+  padding: 16px 10px 28px;
+}
+
+h1 {
+  color: #65e6a5;
+  font-size: clamp(28px, 7vw, 42px);
+}
+
+button, select {
+  font: inherit;
+  border: 0;
+  border-radius: 12px;
+  padding: 13px 18px;
+  margin: 6px;
+}
+
+button {
+  background: #65e6a5;
+  color: #10251b;
+  font-weight: 800;
+  cursor: pointer;
+  touch-action: none;
+}
+
+button:active {
+  transform: scale(.96);
+  filter: brightness(.9);
+}
+
+select {
+  background: #263744;
+  color: white;
+  border: 1px solid #71818c;
+}
+
+#titleScreen {
+  max-width: 500px;
+  margin: 8vh auto 0;
+  padding: 20px 10px;
+}
+
+.small {
+  color: #c6d2da;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+#game {
+  display: none;
+  max-width: 500px;
+  margin: auto;
+}
+
+canvas {
+  display: block;
+  width: min(94vw, 420px);
+  height: auto;
+  margin: 12px auto;
+  border: 3px solid #65e6a5;
+  border-radius: 6px;
+  touch-action: none;
+}
+
+#message {
+  min-height: 26px;
+  font-weight: bold;
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: repeat(3, 76px);
+  grid-template-rows: repeat(2, 62px);
+  justify-content: center;
+  gap: 7px;
+  margin: 14px auto;
+  touch-action: none;
+}
+
+.controls button {
+  margin: 0;
+  padding: 0;
+  font-size: 25px;
+  border-radius: 14px;
+}
+
+#up { grid-column: 2; grid-row: 1; }
+#left { grid-column: 1; grid-row: 2; }
+#down { grid-column: 2; grid-row: 2; }
+#right { grid-column: 3; grid-row: 2; }
+
+.secondary {
+  background: #d9e5ec;
+  color: #17242d;
+}
+
+button:focus-visible, select:focus-visible {
+  outline: 3px solid white;
+  outline-offset: 3px;
+}
+</style>
+</head>
+<body>
+
+<section id="titleScreen">
+  <h1>迷路サバイバル</h1>
+  <p>敵から逃げて、ゴールを目指せ！</p>
+  <p>遊ぶたびに迷路が変わる！</p>
+
+  <p>難易度</p>
+  <select id="difficulty">
+    <option value="easy">かんたん</option>
+    <option value="normal" selected>ふつう</option>
+    <option value="hard">むずかしい</option>
+  </select>
+  <br>
+  <button id="startButton">ゲーム開始</button>
+  <p class="small">
+    iPad：方向ボタンを長押しして移動<br>
+    PC：矢印キーで移動
+  </p>
+</section>
+
+<section id="game">
+  <h2>迷路から脱出せよ！</h2>
+  <canvas id="canvas" width="420" height="420"></canvas>
+  <p id="message">黄色いゴールを目指せ！</p>
+
+  <div class="controls">
+    <button id="up" data-dir="up">▲</button>
+    <button id="left" data-dir="left">◀</button>
+    <button id="down" data-dir="down">▼</button>
+    <button id="right" data-dir="right">▶</button>
+  </div>
+
+  <button id="retryButton">新しい迷路で再挑戦</button>
+  <button id="titleButton" class="secondary">タイトルに戻る</button>
+</section>
+
+<script>
+"use strict";
+
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const titleScreen = document.getElementById("titleScreen");
+const gameScreen = document.getElementById("game");
+const message = document.getElementById("message");
+
+const SIZE = 21;
+const TILE = canvas.width / SIZE;
+
+let maze = [];
+let player = { x: 1, y: 1 };
+let enemy = { x: 19, y: 1 };
+let goal = { x: 19, y: 19 };
+let playing = false;
+let enemyTimer = null;
+let moveTimer = null;
+let activeDirection = null;
+let enemySpeed = 350;
+
+const directions = {
+  up: [0, -1],
+  down: [0, 1],
+  left: [-1, 0],
+  right: [1, 0]
+};
+
+function shuffle(array) {
+  for (let i = array.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+  return array;
+}
+
+// 穴掘り法でランダム迷路を作る
+function generateMaze() {
+  maze = Array.from(
+    { length: SIZE },
+    () => Array(SIZE).fill(1)
+  );
+
+  function carve(x, y) {
+    maze[y][x] = 0;
+
+    const dirs = shuffle([
+      [0, -2], [0, 2], [-2, 0], [2, 0]
+    ]);
+
+    for (const [dx, dy] of dirs) {
+      const nx = x + dx;
+      const ny = y + dy;
+
+      if (
+        nx > 0 && nx < SIZE - 1 &&
+        ny > 0 && ny < SIZE - 1 &&
+        maze[ny][nx] === 1
+      ) {
+        maze[y + dy / 2][x + dx / 2] = 0;
+        carve(nx, ny);
+      }
+    }
+  }
+
+  carve(1, 1);
+
+  player = { x: 1, y: 1 };
+  goal = { x: SIZE - 2, y: SIZE - 2 };
+
+  // ゴールまでの道を必ず作る
+  for (let x = 1; x <= goal.x; x++) maze[1][x] = 0;
+  for (let y = 1; y <= goal.y; y++) maze[y][goal.x] = 0;
+  for (let x = 1; x <= goal.x; x++) maze[goal.y][x] = 0;
+
+  // 敵はスタートから離れた通路に配置
+  enemy = { x: goal.x, y: 1 };
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  for (let y = 0; y < SIZE; y++) {
+    for (let x = 0; x < SIZE; x++) {
+      ctx.fillStyle = maze[y][x] === 1 ? "#344653" : "#17242d";
+      ctx.fillRect(
+        x * TILE, y * TILE,
+        Math.ceil(TILE), Math.ceil(TILE)
+      );
+    }
+  }
+
+  ctx.fillStyle = "#ffd54a";
+  ctx.fillRect(
+    goal.x * TILE + 3, goal.y * TILE + 3,
+    TILE - 6, TILE - 6
+  );
+
+  ctx.fillStyle = "#ff5050";
+  ctx.beginPath();
+  ctx.arc(
+    enemy.x * TILE + TILE / 2,
+    enemy.y * TILE + TILE / 2,
+    TILE * .36, 0, Math.PI * 2
+  );
+  ctx.fill();
+
+  ctx.fillStyle = "#65e6a5";
+  ctx.beginPath();
+  ctx.arc(
+    player.x * TILE + TILE / 2,
+    player.y * TILE + TILE / 2,
+    TILE * .36, 0, Math.PI * 2
+  );
+  ctx.fill();
+}
+
+function stopTimers() {
+  clearInterval(enemyTimer);
+  clearInterval(moveTimer);
+  enemyTimer = null;
+  moveTimer = null;
+  activeDirection = null;
+}
+
+function startGame() {
+  stopTimers();
+
+  const difficulty = document.getElementById("difficulty").value;
+  enemySpeed = difficulty === "easy" ? 650 :
+               difficulty === "hard" ? 180 : 350;
+
+  generateMaze();
+  titleScreen.style.display = "none";
+  gameScreen.style.display = "block";
+  playing = true;
+  message.textContent = "敵から逃げてゴールへ！";
+  draw();
+
+  enemyTimer = setInterval(moveEnemy, enemySpeed);
+}
+
+function finishGame(won) {
+  if (!playing) return;
+
+  playing = false;
+  stopTimers();
+  message.textContent = won
+    ? "脱出成功！ おめでとう！"
+    : "ゲームオーバー！ 敵に捕まった！";
+  draw();
+}
+
+function movePlayer(dx, dy) {
+  if (!playing) return;
+
+  const nx = player.x + dx;
+  const ny = player.y + dy;
+
+  if (
+    nx < 0 || nx >= SIZE ||
+    ny < 0 || ny >= SIZE ||
+    maze[ny][nx] === 1
+  ) return;
+
+  player.x = nx;
+  player.y = ny;
+
+  if (player.x === enemy.x && player.y === enemy.y) {
+    finishGame(false);
+  } else if (player.x === goal.x && player.y === goal.y) {
+    finishGame(true);
+  } else {
+    draw();
+  }
+}
+
+// 幅優先探索で敵がプレイヤーへの道を探す
+function findPath() {
+  const queue = [[enemy.x, enemy.y, []]];
+  const visited = new Set([`${enemy.x},${enemy.y}`]);
+  const dirs = [[0,-1], [0,1], [-1,0], [1,0]];
+
+  while (queue.length) {
+    const [x, y, path] = queue.shift();
+
+    if (x === player.x && y === player.y) return path;
+
+    for (const [dx, dy] of dirs) {
+      const nx = x + dx;
+      const ny = y + dy;
+      const key = `${nx},${ny}`;
+
+      if (
+        nx >= 0 && nx < SIZE &&
+        ny >= 0 && ny < SIZE &&
+        maze[ny][nx] === 0 &&
+        !visited.has(key)
+      ) {
+        visited.add(key);
+        queue.push([nx, ny, [...path, [nx, ny]]]);
+      }
+    }
+  }
+
+  return [];
+}
+
+function moveEnemy() {
+  if (!playing) return;
+
+  const path = findPath();
+  if (path.length) {
+    [enemy.x, enemy.y] = path[0];
+  }
+
+  if (enemy.x === player.x && enemy.y === player.y) {
+    finishGame(false);
+  } else {
+    draw();
+  }
+}
+
+// 長押し操作：最初に1歩、以降は一定間隔で移動
+function stopHolding() {
+  clearInterval(moveTimer);
+  moveTimer = null;
+  activeDirection = null;
+}
+
+document.querySelectorAll("[data-dir]").forEach(button => {
+  button.addEventListener("pointerdown", event => {
+    event.preventDefault();
+    if (!playing) return;
+
+    stopHolding();
+    activeDirection = button.dataset.dir;
+
+    try {
+      button.setPointerCapture(event.pointerId);
+    } catch (_) {}
+
+    const [dx, dy] = directions[activeDirection];
+    movePlayer(dx, dy);
+
+    moveTimer = setInterval(() => {
+      if (!playing || activeDirection === null) {
+        stopHolding();
+        return;
+      }
+
+      const [mx, my] = directions[activeDirection];
+      movePlayer(mx, my);
+    }, 150);
+  });
+
+  ["pointerup", "pointercancel", "lostpointercapture"].forEach(type => {
+    button.addEventListener(type, stopHolding);
+  });
+
+  button.addEventListener("contextmenu", event => {
+    event.preventDefault();
+  });
+});
+
+// キーボード操作
+document.addEventListener("keydown", event => {
+  const keys = {
+    ArrowUp: "up",
+    ArrowDown: "down",
+    ArrowLeft: "left",
+    ArrowRight: "right"
+  };
+
+  const direction = keys[event.key];
+  if (!direction) return;
+
+  event.preventDefault();
+  const [dx, dy] = directions[direction];
+  movePlayer(dx, dy);
+});
+
+document.getElementById("startButton")
+  .addEventListener("click", startGame);
+
+document.getElementById("retryButton")
+  .addEventListener("click", startGame);
+
+document.getElementById("titleButton")
+  .addEventListener("click", () => {
+    stopTimers();
+    playing = false;
+    gameScreen.style.display = "none";
+    titleScreen.style.display = "block";
+  });
+
+// ページ全体の長押しメニューを抑える
+document.addEventListener("contextmenu", event => {
+  if (event.target.closest("button, canvas, .controls")) {
+    event.preventDefault();
+  }
+});
+</script>
+</body>
+</html>
